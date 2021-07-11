@@ -1,0 +1,631 @@
+---
+title: "데이터 불러들이기"
+author: "Sumeun Data Science"
+date: "2021/07/01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+###tags=ifelse,전처리,데이터,압축
+###category=R,전처리
+knitr::opts_chunk$set(echo = TRUE)
+## data files : crypto2021-05.zip, dat_encodings.txt
+```
+
+
+최근에 지인이 텍스트 데이터 화일을 Python에 못 불러읽어서 제게 도움을 요청했습니다. 파이썬에는 `pandas.read_csv()` 함수가 있는데, 여러 가지 설정 사항을 조합하면 여러 가지 다양한 텍스트 데이터 화일을 읽을 수가 있습니다. 다시 말하면 그런 설정 사항을 제대로 정하지 못하면 데이터를 잘못 읽거나, 아니면 아예 에러가 발생해서 데이터 분석이 진행되지 못하는 경우도 있습니다. R도 마찬가입니다. 
+
+그래서 최근 개정 작업 중인 [R로 하는 빅데이터 분석: 데이터 전처리와 시각화](http://www.kyobobook.co.kr/product/detailViewKor.laf?mallGb=KOR&ejkGb=KOR&linkClass=&barcode=9791196014490&orderClick=JAe&Kc=)의 `<`R로 데이터 읽어오기`>`를 상당 부분 개정하고 있는데, 그 내용을 공유하고자 합니다. 관련된 주요 개정 내용은 다음과 같습니다. 
+
+* 텍스트 데이터 화일은 사람이 눈으로 쉽게 데이터를 확인할 수 있다는 장점이 있지만, 단점도 많이 있습니다. 특히 전형적인 구조가 아닌 경우, 열구분문자, 인용부호 등을 텍스트 화일을 보고 직접 정해줘야 한다는 점입니다. 그런데 그걸 정확하게 정할 수 있으려면 텍스트 데이터 화일이 어떻게 생성되는지에 대한 이해가 필요합니다. 
+
+* 용량이 큰 텍스트 데이터 화일을 어떻게 다뤄야 할까요? 최근 날마다 추가되는 텍스트 데이터가 용량이 점점 커지고 있어서 어떻게 다뤄야하는지에 대한 고민이 있습니다. 여러 경로로 제가 발견한 최적의 해법을 공개합니다.
+
+* 최근 `rio`라는 패키지는 온갖 종류의 화일 형식을 지원하는 편리한 함수를 지원합니다. 이를 소개합니다. 
+
+현재는 아직 원고입니다. 용어 통일이나, 짜임새가 아직 부족합니다[^lixenc]. 제안 환영합니다. 
+
+[^lixenc]: 특히 윈도우 인코딩 관련된 챕터는 그냥 넘어가주세요. 윈도우, 맥, 리눅스에서 해보고 있는데, 다 다르게 나오네요(ㅠ). 
+
+아직 database(별도 챕터), json 정도가 추가될 가능성이 있을 것 같습니다. 혹시라도 추가하면 좋은 내용이 있다면 알려주세요. 채택 시 3판을 보내드리겠습니다.
+
+----
+
+# R로 데이터 읽어오기
+
+> 쉼표가 행분리문자일 때, 인용부포 따옴표는 쉼표가 포함된 셀에 대해서만 사용할 수 있다. 그렇다면 쉼표는 포함되지 않지만, 따옴표가 포함된 셀에 대해서도 인용부호 따옴표를 생략할 수 있는가? 그 근거는 무엇인가?
+
+데이터를 화일로 저장하는 방식은 다양하다. 저장하는 방법에 따라 데이터를 읽어오는 방법도 달라져야 하므로, R에서 데이터를 읽어오는 방법도 매우 다양할 수밖에 없다. 
+
+데이터를 화일로 저장하는 방식은 크게 **텍스트 화일로 저장**하는 방식과 **바이너리(이진수) 화일로 저장**하는 방식으로 나눌 수 있다. 텍스트로 저장을 하면 사람이 그 내용을 쉽게 읽을 수 있다는 장점이 있지만, 바이너리로 저장하는 방법에 비해 저장 용량이 커진다는 단점이 있다. 그리고 텍스트로 저장된 파일은 사람이 읽기 쉽고, 손쉽게 고칠 수도 있다는 점이 장점이기만, 그만큼 실수 또는 고의로 데이터가 변경되는 경우도 발생한다는 점에서 단점도 된다. 또한 데이터 타입과 같이 텍스트로 표현할 수 없는 내용은 텍스트 화일을 읽는 설정값에 따라 달라질 수 있는 여지도 있다.[^readingoption]
+
+[^readingoption]: 예를 들어 주어진 열이 문자열이냐 팩터형이냐의 문제나, 1, 2, 3을 정수로 볼 것이냐, 아니면 범주형 데이터에 대한 코딩(coding)으로 볼 것이냐 등과 같은 선택 사항이 있다.
+
+반면 바이너리 화일은 상대적으로 저장 용량이 작고, 읽거나 쓸 때 상대적으로 빠르다. 데이터 타입과 같이 텍스트로 명기하기 힘든 사항도 정확하게 저장할 수 있다는 점도 장점이다. 하지만 한 번 에러가 발생하면 별다른 방법이 없어 속수무책이 되어 버리곤 한다. 
+
+이번 장에서는 여러 상황에서 데이터를 읽어들이는 방법에 관해 설명한다. 특히 텍스트 화일의 경우, 텍스트 화일이 작성되는 원리에 대해 알아봄으로써 혹시 데이터를 읽을 때 문제가 생기더라도 스스로 해결할 수 있도록 하였다. 사실 여러 데이터를 다루다보면 정확하게 읽기 까다로운 경우를 접하게 된다. 특히 특이한 형식으로 작성된 데이터, 또는 사소한 오류가 발생한 데이터의 경우에는 데이터를 제대로 읽지 못해서 분석을 시작도 못하는 경우도 있다. 그런 경우에도 텍스트 데이터가 작성되는 원리를 이해한다면 문제 해결에 큰 도움이 된다. 특히 오류가 발생해 어떤 방법으로도 해결되지 않는 데이터 화일을 간단하게 수정하여 문제를 해결하는 경우도 있다.[^dataprinc]
+
+[^dataprinc]: 부록 `<`수표기`>`의 내용은 텍스트 데이터를 작성하는 방법을 이해하는 데 도움이 된다. 
+
+이에 반해 바이너리로 저장된 경우에는 사람이 할 수 있는 부분이 별로 없다. 데이터가 작성될 때 사용된 설정값을 기억해서 읽을 때 다시 활용하는 것 정도이다. 최근에는 `rio`(r **i**nput/**o**utput) 패키지가 여러가지 다양한 화일 형식에 대해 읽거나 쓰는 방법을 통일시킨 함수(`import`/`export`)를 제공하고 있기 때문에 굉장히 편리해졌다. 
+
+데이터 화일을 관리할 때, 흔히 원본 데이터는 원본 그대로 보존해 두길 권고한다. 원본이 존재해야 분석에 오류가 발생하거나, 문제가 발생할 때, 그 원인을 파악하기 용이하기 때문이다.
+
+하지만 원본 데이터의 용량이 커지게 되면, 이들을 보관하기 위해 너무 많은 저장 공간을 차지하게 되고, 데이터 처리에 소요되는 시간도 길어진다. 이 경우에는 텍스트 화일을 압축해서 저장하거나, 바이너리 화일로 변환하여 저장하는 방법 등을 사용할 수 있다. 이번 장에는 이뿐만 아니라 웹에서 데이터를 긁어오는(Web-scraping) 방법에 대해서도 간단하게 소개한다. 
+
+### 주요 내용
+  
+* R 내장 데이터 : [`data()`](#data)
+* 가장 기본적인 방법 : [`read.table`/`write.table`, `load`/`save`](#load)
+* [텍스트로 저장된 화일 읽어오기](#text)
+    - [`read.csv`](#readcsv)
+    - 빅데이터: [`data.table::fread`](#fread), `readr::read_csv`
+* [바이너리 화일 읽어오기](#binary) : `read_RDS`, `feather::read_feather`
+* [압축 화일에서 읽어오기](#importzip)
+* 엑셀 화일 : [`readxl::read_excel`](#readexcel)
+* 웹에서 긁어오기 : [`htmltab`, `readHTMLTable`](#webscraping)
+* [정리](#importdatasummary)
+
+## R 내장 데이터 {#data}
+
+데이터를 불러들이는 가장 쉬운 방법은 R의 내장 데이터를 사용하는 것이다. `library(help = "datasets")`는 내장 데이터의 목록을 보여준다. 패키지에 포함된 데이터를 사용할 경우에는 `data()`의 `package` 인자를 사용하거나 `library()`로 먼저 패키지를 읽어들인 후 `data()`를 사용한다.[^im1]
+
+[^im1]: 설치된 패키지의 모든 데이터는 `data(package = .packages(all.available = TRUE))`로 확인할 수 있다.
+
+```{r data, collapse=TRUE}
+data(mtcars)
+head(mtcars, n=3)
+
+data("BankWages", package='AER')
+head(BankWages, n=3)
+```
+
+## 들어가기 : `write.table`/`read.table`, `save`/`load` {#load}
+
+```{r intro, collapse=TRUE}
+dat <- mtcars
+head(dat, n=3)
+class(dat)
+
+write.table(dat, file='dat.txt')
+dat02 <- read.table(file='dat.txt')
+
+all.equal(dat, dat02)
+```
+
+데이터 프레임을 가장 손쉽게 읽고 쓸 수 있는 방법은 `read.table`과 `write.table`을 사용하거나, `load`와 `save`를 사용하는 것이다. `read.table`/`write.table`과 `load`/`save`의 가장 큰 차이는 저장된 데이터를 문서 편집기를 통해 읽을 수 있느냐, 없느냐이다. 앞에서 얘기했듯이 같은 내용의 경우, (사람이 읽을 수 있는) **텍스트 화일**은 대부분 사람이 읽을 수 없는 화일(**바이너리 화일**[^im2])보다 크기가 크다. 그리고 바이너리 화일은 텍스트 화일로 저장할 수 없는 미묘한 데이터의 차이를 저장할 수 있다(예를 들어 어떤 변수가 문자형인지 범주형인지를 텍스트만으로 구분할 수 없다).
+
+[^im2]: 바이너리 화일: 화일의 내용이 이진수(Binary Number)로 저장되어 있다는 의미. 
+
+```{r intro02, collapse=TRUE, error=TRUE, eval=F}
+dat <- mtcars
+
+save(dat, file='dat.RData')
+datBackup <- dat
+rm(dat)
+head(dat)
+
+load(file='dat.RData')
+
+head(dat, n=3)
+all.equal(dat, datBackup)
+file.size('dat.txt')
+file.size('dat.RData')
+```
+
+## 텍스트로 저장된 데이터 화일 읽기{#text}
+
+### 직접 텍스트 데이터 화일을 작성해 보기
+
+다음은 어떤 통신 회사의 문자 메세지 관련 데이터이다.
+
+```{}
+이름 : BTS
+전화번호 : 010-4342-5842 
+지난달 총 사용료 : 38000원
+메세지 : 안녕? 날씨 좋다. "가즈아!"라고 말하고 싶다.
+가격 : 30원 
+
+이름 : 트와이스
+전화번호 : 010-5821-4433
+지난달 총 사용료 : 58000원
+메세지 : 달빛 아래 춤추자! '너무너무너무'라고 노래 부를래.
+가격 : 10원 
+
+이름 : 케이티 킴
+전화번호 : 010-5532-4432
+지난달 총 사용료 : 31000원
+메세지 : Memorable! 
+가격 : <NA>
+```
+
+R은 다음과 같은 방법으로 `dat`라는 데이터 프레임에 데이터를 저장할 수 있다. (버전 4부터는 `stringsAsFactors`의 기본값이 `FALSE`로 변경되었다.)
+```{r dataframe, tidy=FALSE}
+datMsg <- 
+  data.frame(
+    name = c("BTS", "트와이스", "케이티 킴"),
+    phone = c('010-4342-5842', '010-5821-4433', '010-5532-4432'),
+    usageLastMonth = c(38000, 58000,31000),
+    message = c('안녕, 날씨 좋다! "가즈아!"라고 말하고 싶다.',
+                '달빛 아래 춤추자! \'너무너무너무\'라고 노래 부를래.',
+                'Memorable'),
+    price = c(30, 10, NA), 
+    stringsAsFactors=FALSE)
+datMsg
+```
+
+----
+
+#### 연습문제 {-}
+
+* 동일한 데이터를 R에서 읽어들일 수 있도록 문서편집기로 직접 텍스트 화일을 작성해보자.
+
+### 확장자 `csv`{#readcsv}
+
+테이블의 형식의 데이터는 다양한 형태로 화일로 저장될 수 있다. 구체적인 형태는 흔히 화일의 확장자로부터 유추할 수 있다. 예를 들어 csv는 **c**omma **s**eperated **v**alue(쉼표로 구분된 값), tsv는 **t**ab **s**eperated **v**alue(탭으로 구분된 값)의 약자이다. 하지만 csv 확장자의 텍스트 화일이 반드시 쉼표(comma)로 열이 구분되는 것은 아니다. R에서 csv 화일을 불러들이는 쉬운 방법은 `read.csv` 함수를 사용하는 것이다. 이때 주의할 점이 있다. 다음을 보자.
+
+```{r readcsv, collapse=T, eval=F}
+write.csv(datMsg, file='dat.csv')
+datMsg02 <- read.csv(file='dat.csv')
+all.equal(datMsg, datMsg02)
+## [1] "Names: 5 string mismatches"
+## [2] "Length mismatch: comparison on first 5 components"
+## ...
+```
+```{r readcsv2, include=FALSE}
+write.csv(datMsg, file='dat.csv')
+datMsg02 <- read.csv(file='dat.csv')
+all.equal(datMsg, datMsg02)
+```
+
+```{r}
+head(datMsg02, 3)
+```
+
+특이하게도 `write.csv()`로 쓴 화일은 `read.csv(   , row.names=1)`로 읽어야 한다. 
+
+```{r readcsv02, collapse=T, tidy=FALSE}
+datMsg03 <- 
+  read.csv(file='dat.csv', row.names=1, stringsAsFactors=FALSE)
+all.equal(datMsg, datMsg03)
+```
+
+### 수치 데이터를 텍스트 화일로 저장하기
+
+분석에 사용되는 대부분의 데이터는 행과 열로 이루어진 직사각형의 형태이다. R에서 데이터 프레임이라고 생각하면 쉽다. 수치 데이터로만 이루어진 데이터 프레임을 생각해보자. 이 자료를 텍스트로 저장할 때 정해야 하는 사항이 무엇일까?
+
+가장 먼저 숫자를 어떻게 텍스트로 표시할 것인지를 결정해야 한다. 부록 `<`수표기`>`를 참조하면 숫자를 텍스트로 표기하는 데에도 다양한 방법이 존재함을 확인할 수 있다. 여기서는 논의의 편의상 가장 일반적인 방법, 즉 소수점은 점(`.`)을 사용하고 천단위 자리 기호는 사용하지 않는다고 가정하자. 
+
+이때에 나머지 결정사항은 행구분과 열구분을 어떻게 하느냐이다. 텍스트 데이터 화일의 가장 큰 장점이 사람들이 데이터를 쉽게 읽을 수 있다는 점이라고 할 때, 가장 사람이 읽기 쉬운 방법은 fwf(**f**ixed **w**ith **f**ile) 형식을 사용하는 거이다.
+
+이 방법은 행의 구분은 `"\n"`(줄바꿈)으로 하고, 각 열의 위치가 고정되어 있다. 예를 들어 다음과 같은 방법이다.
+
+```
+170  65
+185 101 
+190 110 
+166  45
+```
+
+네 사람의 키와 체중 자료를 텍스트로 작성했다. 각 줄의 처음 세 글자는 키를 나타내고, 그 뒤의 (공백을 포함한) 네 글자는 체중을 나타낸다. 사실 컴퓨터의 입장에서 중간의 공백은 불필요하지만 사람이 데이터를 읽을 때에는 크게 도움이 된다. 
+
+이런 방식의 데이터 저장 방법은 사람이 읽기에는 좋지만 저장 효율은 좋지 않다. 중간에 공백 문자가 많이 들어가기 때문이다. 그리고 숫자의 길이를 미리 정해줘야 한다는 단점도 있다. 위의 예에서 소수점이 들어간 수(예. 167.45)를 추가해야 한다면, 이전의 자료를 새로 다시 써야 한다. 반면, 탭을 열구분문자로 사용한다면 공백 문자를 쓰지 않고도 겉보기에 자료를 만들 수 있다.
+
+```
+170   65
+185   101
+190   110
+166   45
+```
+
+보통 공백 문자와 구분되지 않지만 Notepad++와 같은 편집기에서 `보기>기호보기>공백과 탭 표시` 설정을 켜면 두 문자(공백 문자와 탭)를 구분해서 볼 수 있다. 하지만 한 열의 문자 갯수가 행마다 크게 다르다면 탭을 열구분문자로 쓴 경우 열을 구분하기가 쉽지 않다. 열의 갯수가 많아질 수록 열의 구분은 힘들어진다. 다음의 데이터를 보자. 같은 열에 속하는 숫자를 확인하기가 쉽지 않다.
+
+```
+199000    43    34532.112    331231231111
+29991443    32    123342111   11334
+441233    11253411211.23411    11231   1111.00071
+```
+
+그리고 공백문자와 탭이 연결되어 있는 경우를 탭 하나와 식별하기 어렵게 될 수도 있다. 만약 열구분문자를 쉼표로 쓸 경우에는 이런 문제를  해소할 수 있다. 물론 고정길이 형식처럼 각 열을 쉽게 구분할 수 있는 것은 아니지만, 고정길이 형식이 지나치게 큰 용량을 차지하는 경우 차선책이 될 수 있다. 실제로 요즘 가장 널리 사용되는 경우는 열구분문자로 쉼표를 사용하는 것이다. 
+
+다음의 예를 결측값이 여럿 존재할 때 열구분문자에 의한 텍스트 차이를 보여준다. 
+
+```
+199000        34532.112    331231231111
+29991443           11334
+441233    11253411211.23411       
+```
+
+```
+199000,,34532.112,331231231111
+29991443,,,11334
+441233,11253411211.23411,,
+```
+
+### 문자 데이터를 텍스트 화일로 저장하기
+
+위에서 봤던 수치 데이터의 경우, 수치를 표기하기 위해 사용하는 문자(점과 숫자)와 행과 열을 구분하는 문자가 겹치지 않았다. 하지만 문자 데이터를 저장하는 경우에는 항상 그렇지 않다.
+
+예를 들어, "You love me, don't you?"라는 문자열 데이터의 경우 쉼표가 포함되어 있다. 만약 열구분문자로 쉼표를 사용할 경우에는 이 둘을 혼동할 수 있다. 
+
+```
+1,Mary,You love me, don't you?,love
+2,John,I do love you.,dream
+3,Suzy,Attention, please.,heart
+```
+
+위의 데이터의 첫 번째 열은 순번, 두 번째 열은 이름, 세 번째 열은 **자신이 좋아하는 문장**, 그리고 마지막 열은 자신이 좋아하는 단어를 나타낸다. 이때 쉼표가 문장 안에서 쓰인 것인지 아니면 열구분문자로 쓰인 것인지를 기계적으로 확인하는 방법은 없다. 그래서 보통 텍스트 자료에서 쉼표가 포함된 열을 표기하기 위해 하나의 값 전체를 큰 따옴표로 묶는 방법을 사용한다. 위의 자료는 다음과 같이 쓸 수 있다. 
+
+```
+1,Mary,"You love me, don't you?",love
+2,John,"I do love you.",dream
+3,Suzy,"Attention, please.",heart
+```
+
+어떤 문자를 특수한 용도로 사용하게 되면, 그 문자를 **원래 문자 그대로** 사용하기 위해 다른 방법을 강구해야 한다. 행구분문자로 줄바꿈문자, 열구분문자로 쉼표를 사용할 경우 줄바꿈문자와 쉼표를 원래 문자로 쓰기 위해 따옴표로 열의 시작과 열의 끝을 표시한다고 생각할 수 있다. 이때 따옴표는 열의 시작과 열의 끝을 나타내는 특별한 의미를 부여받았기 때문에, 이를 문자 그대로를 의미하기 위해 다시 특별한 방법이 필요하다(만약 따옴표가 문자열에 포함되지 않는다면 문제가 되지 않는다). 이때 보통은 **따옴표를 두번 연속** 사용해서 문자 따옴표를 나타내는 방식을 사용한다. 예를 들어 다음과 같다. 
+
+```
+1,Mary,"I asked him, ""How are you?""",love
+2,Paul,"I entered room.
+He saw me and ran right away",run
+3,Jim,"""This is crazy!"" He spoke.
+But he thought, 'This is wonderful!' 
+She agreed.",agree
+```
+
+첫 번째 줄은 첫 번째 행을 나타낸다. `"How are you?"`에서 앞쪽과 뒤쪽의 따옴표를 표기하기 위해 중복된 따옴표를 사용하고 있다. 네 번째 줄의 `"""`에서 첫 번째 따옴표는 열의 시작을 나타내고, 두 번째와 세 번째 따옴표는 합쳐져 따옴표 하나를 나타내고 있다. 
+
+```{r}
+txt = '1,Mary,"I asked him, ""How are you?""",love
+2,Paul,"I entered room.
+He saw me and ran right away",run
+3,Jim,"""This is crazy!"" He thought.
+But he thought, \'This is wonderful!\' 
+She agreed.",agree'
+read.csv(text=txt, header=FALSE)
+```
+
+보통 NA로 나타내는 결측값의 경우도 생각해보자. 수치형 데이터에서 결측값은 열구분문자 쉼표가 연속적으로 나타나는 것으로 확인할 수 있다.
+
+```{r}
+txt = '170,63,11
+173,,14
+168,53,'
+dat=read.csv(text=txt, header=FALSE)
+dat
+```
+
+하지만 문자열 데이터의 경우에 이런 방법을 쓰기 어려울 수도 있다. 왜냐하면 `''`(아무런 대답도 하지 않은 경우)와 구분이 힘들기 때문이다.[^noresp]
+
+[^noresp]: 어떤 질문에 대해 아무런 대답을 하지 않은 것(`''`)과 여러 가지 이유로 대답을 들을 수 없었던 경우(`NA`)는 엄연히 다른 상황이다. 어떤 대답을 했지만 여러 가지 사정으로 그 값을 알 수 없는 경우도 `NA`로 나타낼 수 있다.
+
+다음의 데이터를 보자.
+
+```{r}
+txt = ',,
+NA,NA,NA
+"NA",1985,kindness
+"Grande-Butera, Ariana",1993,heart'
+dat1=read.csv(textConnection(txt), header=FALSE)
+library(readr)
+dat2=read_csv(file=txt, col_names=FALSE)
+library(data.table)
+dat3=fread(txt, header=FALSE)
+```
+
+이 텍스트에는 일부러 다양한 방식의 결측값을 넣었고 뒤에서 소개할 여러 가지 함수를 사용하여 텍스트 화일을 읽고 있다. 수치형 데이터의 경우, 숫자가 없이 열구분문자가 연속되어 있거나, 명시적으로 `NA`을 쓰면 모두 결측값으로 인식된다. 하지만 문자열의 경우에는 표기 방법에 따라, 그리고 사용하는 함수에 따라 결과가 달라진다.
+
+가장 먼저 아무것도 쓰지 않고 열구분문자가 연속되는 경우에, `read.csv()`와 `fread()`의 경우는 `''`으로 인식되었지만, `read_csv()`의 경우는 결측값으로 인식되었다. `''`에는 쉼표가 포함되어 있지 않기 때문에 값을 따옴표로 감싸 안을 필요가 없다고 생각하면 쉽게 이해할 수 있다. `read_csv()`의 경우는 설정의 문제인데, 기본적으로 `''`는 결측값으로 인식된다. 
+
+이제 큰 따옴표를 씌우지 않은 `NA`를 보자. 이들은 모두 결측값으로 인식되었다. 이때 해당열이 따옴표를 사용하지 않는 열이라면, `"NA"`를 입력할 수 없게 되는 문제를 예상할 수 있다(물론 `"NA"`를 입력해야 하는 경우는 거의 없겠지만). 반면에 따옴표를 사용하는 열에서는 `NA`(결측값)과 `"NA"`(NA로 대답함)을 구분할 수 있다. 쉼표와 비슷하게 `NA`(결측값)과 `"NA"`(문자열 `NA`)를 구분하기 위해서는 따옴표가 필요한 것이다. 하지만 `read.csv()`와 `fread()`의 경우와 달리 `read_csv()`의 경우에는 이런 구분이 잘 통하지 않았다(아래 코드 결과 참조). 
+
+```{r}
+dat2b = read_csv(file=txt, col_names=FALSE, na='NA')
+dat2c = read_csv(file=txt, col_names=FALSE, quoted_na=FALSE)
+dat3[4,1]="<NA>"
+dat1[4,1]="<NA>"
+```
+
+이번엔 위의 코드로 생성된 `dat1`, `dat3`과  `dat2b`를 출력해보자. 무응답, 결측값, 문자열 `"NA"` 또는 `"<NA>"`를 구분하는 능력에서는 `read_csv()`가 `fread()`보다 낫다고 할 수 있다. 
+
+* 데이터프레임(`read.csv()`)
+
+```{r}
+dat1
+```
+
+* 티블(`read_csv()`)
+
+```{r}
+dat2b
+```
+
+* 데이터테이블(`fread()`)
+
+```{r}
+dat3
+```
+
+### 텍스트 데이터 화일을 불러읽을 때 고려해야 할 사항
+
+그 밖에도 테이블 형태의 데이터를 화일로 저장하기 위해 결정해야 할 사항이 많다. 다음은 `read.table` 함수를 통해 테이블 형태의 텍스트 데이터 화일을 읽어올 때 고려할 점들을 보여준다.
+
+1. 텍스트 인코딩
+    - `readr::guess_encoding()`을 통해 유추할 수 있다. 하지만 확실하지 않다.
+    - [notepad++](https://notepad-plus-plus.org/) 등의 문서작성 프로그램을 활용하여 인코딩을 확인할 수도 있다. 특히 UTF-8BOM과 UTF-8의 구분은 `readr::guess_encoding()`에서는 불가능하지만 notepad++에서는 가능했다.
+2. 전체적인 형식 : 아래에서 `c(,)`로 묶인 원소 중 하나를 선택해야 한다. 예) `header=TRUE` 또는  `header=FALSE`
+    - 행이름을 포함하는가? `header=c(TRUE,FALSE)`
+    - 열이름을 포함하는가? `row.names=c(1,NULL)` 
+    - 열 구분자(delimiter) `sep=c('\t', ',', ' ')`
+3. 데이터를 표기하는 방법
+    - 주석은 어떻게 구분하는가? `comment.char=`
+    - 따옴표(quotation mark; 문자열 속에 열 구분자를 포함시켜야 할 경우를 생각해보자): `quote=`
+    - 소수점 표기 방법(decimal seperator): `dec=` ([나라마다 소수점 표기 방법이 다르다.](https://en.wikipedia.org/wiki/Decimal_separator#Examples_of_use))
+4. 그 밖에
+    - `stringsAsFactors=c(TRUE,FALSE)`
+    
+----
+    
+#### 연습문제 {-}
+
+* 다음의 코드를 보고 화일을 정확히 읽을 수 있도록 코드를 고쳐보자(참고로 Linux에서는 정상적으로 작동한다). 
+
+```{r exercise01, error=TRUE, tidy=FALSE}
+dat01 <- read.csv('서울시 한강공원 이용객 현황 (2009_2013년).csv', 
+                  fileEncoding = 'UTF-8')
+```
+
+* 다음의 경우 열이름이 이상해 보인다. 
+
+```{r error=TRUE, tidy=FALSE}
+dat02 <- read.csv('서울특별시 공공자전거 대여소별 이용정보(월간)_2017_1_12.csv')
+head(dat02, n=3)
+```
+
+* 홈페이지에서 바로 `.csv`를 불러 읽을 때에도 결과에 유의할 필요가 있다. 다음의 코드를 수정해보자.
+
+```{r exercise011, error=TRUE, tidy=FALSE, eval=FALSE}
+dat03 <- read.csv(
+  "http://www.nber.org/data/population-birthplace-diversity/JoEG_BP_diver
+sity_data.csv")
+head(dat03, n=3)
+##      country_name.ccode.year.div1_a.div1_s.div1_u.div2_a.div2_s.div2_u
+## 1 Afghanistan;AFG;1990;.0196283;.043451;.019022;.6398162;.5717307;.640
+## 2   Albania;ALB;1990;.0700942;.0445751;.0726081;.1676445;.2764547;.160
+## 3        Algeria;DZA;1990;.0121732;.0115634;.0121949;.58781;.5485816;.
+```
+```{r exercise012, error=TRUE, tidy=FALSE, include=FALSE}
+dat03 <- read.csv(
+  "http://www.nber.org/data/population-birthplace-diversity/JoEG_BP_diversity_data.csv")
+head(dat03, n=3)
+```
+
+### 빅데이터{#fread}
+
+```{r fread, eval=FALSE}
+readr::read_delim(file= , delim= , col_names= )
+data.table::fread(file= , sep= , header= )
+```
+
+용량이 큰 텍스트 데이터 화일을 `read.table`로 읽으려면 시간이 너무 많이 소요된다. 이때에는 `data.table` 패키지의 `fread` 함수를 사용하자. 가장 중요한 부분은 헤더(`header`; 열이름)의 존재 여부와 열을 분리하는 기호(`sep`)를 설정하는 것이다.
+
+### 윈도우에서 인코딩 문제
+
+#### 보이는 것이 모두가 아니다.
+
+## 열구분문자 쉼표와 따옴표
+
+문자 쉼표가 값에 포함되어 있는 경우, 열구분문자 쉼표가 구분하기 위해 열의 시작과 끝을 따옴표를 사용했다. 열구분문자와 열의 시작과 끝을 나타내는 문자는 사용자의 편의에 따라 다른 문자로 설정이 가능하다. 하지만 현재 가장 많이 사용되는 문자는 쉼표와 따옴표이다.
+
+따옴표가 필요한 것은 값에 문자 쉼표가 포함되어 있는 경우이다. 만약 값에 문자 쉼표가 포함되어 있지 않다면 따옴표로 시작하지 않아도 된다.
+
+문제는 문자 따옴표가 값에 포함되어 있는 경우이다. 문자 쉼표는 없지만, 문자 따옴표가 값에 포함되어 있는 경우에는 열을 시작하고 끝내는 문자 따옴표를 쓰지 않아도 될까? 다음의 예를 보자.
+
+```
+I am ok.,You are fine.,"Thank you, sir."
+"A,B","A,B"
+```
+
+위의 텍스트는 열의 갯수가 3인 데이터를 나타낸다. 첫 행의 두 값(첫 번째 열과 두 번째 열)은 쉼표를 포함하지 않기 때문에 열의 시작과 끝을 나타내기 위해 따옴표가 필요하지 않다. 세번째 값은 쉼표를 포함하기 때문에 두 따옴표로 값을 감싸 안았다. 두 번째 행을 보자. 만약 첫 번째 값이 따옴표와 대문자 A라면, 쉼표가 포함되어 있지 않기 때문에 따옴표로 감싸 안지 않았다. 두 번째 값은 대문자 B와 따옴표로 구성된 문자열이며, 이 역시 쉼표를 포함하지 않기 때문에 따옴표로 감싸지 않았다. 세 번째 값은 대문자 A, 쉼표, 대문자 B로 이루어진 문자열이며 이 값은 쉼표를 포함하기 때문에 따옴표로 감싸 안았다. 하지만 이 행은 같은 이유로 `A,B`, `"A`, `B"`로 해석될 수도 있다. 다시 말해 쉼표가 포함되지 않은 값에도 문자 따옴표가 포함되어 있다면 그 값을 다음과 같이 따옴표로 감싸 안아야 이런 모호함을 방지할 수 있다.[^freadquote]
+
+[^freadquote]: 데이터테이블의 `fwrite()`와 `fread()`의 경우 따옴표가 포함된 값을 일관적으로 처리하지 못하는 듯 하다. `fwrite()`는 기본적으로 문자 따옴표를 두 개의 따옴표로 표기하지만, `fread()`는 두 개의 따옴표를 두 개의 따옴표로 인식한다. 아마도 열의 시작과 끝을 나타내는 따옴표는 줄의 첫 글자나 마지막 글자, 그리고 열구분문자의 앞 또는 뒤에서밖에 나타날 수 없기 때문에, 그냥 그대로 써도 혼동의 여지가 없는 경우도 많기 때문일 것이다. 이 경우에는 따옴표가 씌인 경우 열구분문자는 `,`가 아니라 `",`라고 할 수 있다. 물론 `",`가 값에 포함되는 경우가 매우 드물지만(영어권에서 쉼표와 따옴표가 함께 등장할 경우 `,"`로 쓴다.), 실제로 그런 일이 벌어진다면 데이터를 읽을 때 문제가 발생할 수 있다. (`fwrite()` 함수는 좀 더 복잡한 방식으로 열을 구분하기 때문에 그 결과가 어떻게 될지를 쉽게 예상하기는 어렵다.) 그리고 문자 따옴표를 표기/인식하는 방법의 차이에 따라 `fwrite()`로 생성된 텍스트 화일을 `fread()`로 정확히 읽을 수 없는 상황이다. 이에 대해 여러 차례 깃헙에서 issue가 제기되었으나 아직 해결되지 않은 상태이다. 현재로써는 `,"`가 값에 포함되지 않은 경우에는 `fwrite()`의 결과 화일을 `fread()`로 읽기 위해서는 `gsub('""', '"', txt)` 등을 통해 텍스트에 포함된 모든 이중따옴표(`""`)를 하나의 따옴표로 교체한 후 화일을 읽어야 한다. 
+
+## 바이너리 화일 읽기{#binary}
+
+바이너리(이진) 화일은 데이터를 데이터를 컴퓨터만 읽을 수 있는 이진수로 저장한다고 생각하면 된다. R에 이미 데이터가 존재하는 경우, 이 데이터를 저장한 후 다음에 그대로 사용하고 싶다면, 바이너리 화일를 사용하는 것이 편리하다(텍스트 화일로 저장하면서 내용이나 형식이 조금씩 달라질 가능성이 적어진다). 바이너리 화일은 텍스트 화일보다 저장용량이 작고, 데이터의 미묘한 차이(예. 정수 또는 실수, 문자열 또는 범주, 수의 정확성 등)도 저장할 수 있다는 장점도 있다.
+
+서두에 `save()`/`load()` 함수에 대해 알아봤다. `saveRDS()`/`readRDS()`는 하나의 변수(객체)를 저장하고, 불러읽는다. `load()`는 변수 이름이 미리 정해져 있고, `readRDS()`는 데이터를 읽으면서 이름을 정해줄 수 있다는 차이가 있다. 
+
+```{r}
+saveRDS(mtcars, 'mtcars.RDS')
+mtcars2 <- readRDS('mtcars.RDS')
+all.equal(mtcars, mtcars2)
+```
+데이터의 크기가 클 경우에는 `feather` 패키지를 활용하면 데이터를 읽고, 쓰고는 시간을 단축시킬 수 있다(`write_feather`/`read_feather`). 
+
+```{r}
+library(feather)
+library(tibble)
+write_feather(mtcars, 'mtcars.feather')
+mtcars3 <- read_feather('mtcars.feather')
+all.equal(as_tibble(mtcars), mtcars3)
+```
+
+## 압축 화일에서 읽어오기{#importzip}
+
+앞에서 얘기했듯이 텍스트 데이터 화일은 바이너리 데이터 화일에 비해 용량이 크다. 데이터 화일이 10M 바이트 이하라면 상관이 없겠지만, 그 이상이거나, 화일이 여럿이라면 텍스트 화일로 저장하는 것이 부담스러울 수 있다. 만약 데이터 화일을 압축해서 보관한다면 디스크 용량을 절약할 수 있다. 
+
+아래에 압축된 데이터 화일에서 데이터를 바로 읽는 방법을 소개한다.
+
+```{r, message=FALSE}
+require(readr)
+fn_zip = 'crypto2021-05.zip'
+fns = as.character(unzip(fn_zip, list = TRUE)$Name)  
+# zip화일에 압축된 화일 목록
+print(fns)
+dat <- read_csv(unz(fn_zip, fns[1]), col_types=cols())
+# 첫번째 화일(fns[1])을 압축 풀고(unz) read_csv로 읽는다.
+# read_csv는 화일 형식에 맞춰서 변경한다.
+# read_csv의 col_types=cols()를 생략하면 각 컬럼의 데이터 타입(추정)이 출력된다
+head(dat, n=3)
+```
+  
+아래의 코드는 `crypto2021-05.zip`에 압축된 `crypto2021-05-01.csv`, `crypto2021-05-02.csv`, `crypto2021-05-03.csv`의 데이터를 모두 읽어 하나의 데이터 프레임으로 합친다(`<<`여러 데이터 프레임 합치기`>>`와 `<<`data.table을 활용한 병합`>>` 참조).
+
+```{r}
+lst = vector("list", length(fns))
+for (i in seq_along(fns)) {
+  lst[[i]] = read_csv(unz(fn_zip, fns[i]), col_types=cols())  
+  lst[[i]]$src = fns[i]
+}
+dat <- data.table::rbindlist(lst)
+head(dat, n=3)
+```
+
+`read_csv()` 함수는 대체적으로 `fread()` 함수보다 느리지만, 화일 용량이 커질 수록 `fread()`와의 차이가 줄어들고, `fread()`와 다르게 `unz()`의 결과를 바로 사용할 수 있다는 장점이 있다. 따라서 압축 화일 속의 화일 크기를 30MB 이상으로 유지한다면 `fread()`와 비슷한 속도를 유지하면서 데이터를 읽을 수 있을 것이다.[^readcsvspeed]
+
+[^readcsvspeed]: https://csgillespie.github.io/efficientR/input-output.html
+
+
+## 그 밖의 통계 프로그램 데이터 화일
+
+다음은 다양한 데이터 형식을 R로 불러읽을 때, 사용할 수 있는 패키지와 함수를 보여준다.
+
+```{r eval=F}
+library(foreign)
+read.spss() # SPSS
+read.dta() # Stata
+read.ssd() # SAS
+read.octave() # Octave
+read.mtp() # Minitab
+read.systat() # Systat
+```
+
+```{r eval=F}
+library(haven)
+read_dta() # Stata
+read_por() # SPSS .por
+read_sas() # SAS
+read_sav() # SPSS .sav, .zsav
+read_stata() # Stata
+read_xpt() # SAS transport files
+```
+
+```{r eval=F}
+library(readstata13) 
+read.dta13() # Stata version >= 13
+```
+
+이렇게 다양한 데이터 형식만큼이나, 패키지와 함수도 다양하다. 최근에 개발 중인 `rio` 패키지는 이렇게 다양한 패키지와 함수를 통합하여(여러 패키지를 모아 새로운 패키지를 만들었기 때문에 메타-패키지라고도 불린다) 다양한 형식의 데이터 화일을 **하나의 함수**로 읽거나 쓰는 방법을 제시한다. 
+
+먼저 `rio` 패키지를 설치한 후 `install_formats()`를 한다. `rio` 패키지 활용 방법을 알려주는 페이지에서 `rio`가 지원하는 다양한 화일 형식을 확인할 수 있다.[^irio]
+
+[^irio]: https://cran.r-project.org/web/packages/rio/vignettes/rio.html
+
+```{r eval=FALSE}
+install.packages('rio')
+library(`rio`)
+install_formats()
+```
+
+`rio`의 `import()` 함수는 데이터 형식을 화일의 확장자에서 유도하여 데이터를 읽는다(쓰기 위해서는 `export()`함수를 사용한다). 다음은 위에서 사용한 excel 데이터 화일을 `import()`와 `read_excel()`을 사용하여 읽는 법을 보여준다. 
+
+```{r warning=FALSE}
+library(rio)
+library(readxl)
+dat_rio2 <- import('excel_example.xls', which=2) # 두번째 시트
+dat_xl2 <- read_excel('excel_example.xls', sheet=excel_sheets('excel_example.xls')[2]) # 두번째 시트(excel_sheets()[2])
+all.equal(dat_rio2, as.data.frame(dat_xl2))
+
+dat_rio1 <- import('excel_example.xls', which=1)
+dat_xl1 <- read_excel('excel_example.xls', sheet=excel_sheets('excel_example.xls')[1])
+all.equal(dat_rio1, as.data.frame(dat_xl1))
+```
+
+다음은 동일한 데이터를 Stata(버전 13 이상) 형식으로 저장하고 다시 읽어들인다. 몇몇 데이터 형식은 `export()`가 불가능함을 유의하자.
+
+```{r}
+library(readstata13)
+export(dat_rio1, 'dat_rio1.dta')
+read.dta13('dat_rio1.dta')
+import('dat_rio1.dta')
+```
+
+만약 한글을 변수(컬럼)명에 사용하면 다음과 같은 문제가 발생할 수도 있다.
+
+```{r, error = TRUE}
+export(dat_rio2, 'dat_rio2.dta')
+```
+
+
+----
+
+#### 연습문제 {-}
+
+* 아래 주소의 Stata 데이터를 위에서 소개한 패키지/함수를 사용하여 읽어보자. 
+
+```{r eval=FALSE, tidy=FALSE}
+url = 'http://www.nber.org/data/population-birthplace-diversity/JoEG_BP_di
+versity_data.dta'
+```
+
+\clearpage
+
+### R Studio의 GUI 활용하기
+
+* R Studio - File - Import Data를 활용하면 좀 더 쉽게 화일을 읽어올 수 있다.
+
+### Web에서 데이터 긁어오기(Web scraping){#webscraping}
+
+```{r htmltab, cache=TRUE, eval=FALSE, tidy=FALSE}
+library(htmltab)
+
+url <- 
+  "https://en.wikipedia.org/wiki/List_of_most_common_surnames_in_Europe"
+surnames <- htmltab(doc = url, which = 13)
+head(surnames, n=10)
+```
+
+```{r readHTMLTable, cache=TRUE, eval=F, tidy=FALSE}
+library(XML)
+library(RCurl) # install.packages("RCurl")
+library(rlist) 
+
+url <-
+  "https://en.wikipedia.org/wiki/List_of_most_common_surnames_in_Europe"
+#theurl <- getURL(url, .opts = list(ssl.verifypeer = FALSE) )
+#df <- readHTMLTable(theurl, header = TRUE, which = 13, 
+#                    stringsAsFactors = FALSE, encoding = "UTF-8")
+# Windows에서 다음과 같은 에러가 발생(ubuntu는 정상작동)
+# error:1407742E:SSL routines:SSL23_GET_SERVER_HELLO:tlsv1 alert protocol version
+# RCurl은 더 이상 관리되지 않는다고 함.
+#https://stackoverflow.com/questions/31504983/rcurl-geturl-ssl-error
+library(curl)
+con <- curl(url)
+html <- readLines(con)
+
+df <- readHTMLTable(html, header = TRUE, which = 13,
+                    stringsAsFactors = FALSE, encoding = "UTF-8")
+head(df, n=10)
+```
+
+----
+
+#### 연습문제 {-}
+
+* `"https://en.wikipedia.org/wiki/List_of_Korean_surnames"`의 첫 번째 테이블을 읽어오세요.
+
+```{r eval=FALSE, include=FALSE}
+
+---
+
+### 참고자료 {-}
+
+* <https://cran.r-project.org/doc/manuals/R-data.pdf>
+```
+
+## 정리{#importdatasummary}
+
+R에서 외부의 화일을 가장 손쉽게 읽어들이는 방법은 `rio::import()` 함수를 사용하는 것이다. 하지만 `rio` 패키지는 현재 버전 0.5.x로 아직 개발 중이지만 저자가 사용해본 경험에 의하면 큰 문제가 없었다. 만약 `rio::import`에서 오류가 날 경우에는 화일 형식에 맞는 패키지와 함수를 찾아서 데이터를 읽어야 할 것이다.
+
+R에 이미 존재하는 데이터를 쓰고, 읽을 때에는 `saveRDS()`/`readRDS()` 또는 `feather::write_feater()`/`read_feather()` 함수를 사용할 수 있다. `feather`는 속도 면에서 뛰어나지만 아직 버전이 `0.3.x`이다. 
